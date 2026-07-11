@@ -324,7 +324,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = (
         f"*📊 Your Learning Statistics*\n\n"
         f"📚 Words saved: {stats.get('saved_words', 0)}\n"
-        f"🔍 Words looked up: {stats.get('searches', 0)}\n"
+        f"🔍 Words looked up: {stats.get('total_searches', 0)}\n"
         f"🎯 Quiz attempts: {stats.get('quiz_attempts', 0)}\n"
         f"✅ Quiz correct: {stats.get('quiz_correct', 0)}\n"
         f"📈 Success rate: {stats.get('success_rate', 0)}%\n"
