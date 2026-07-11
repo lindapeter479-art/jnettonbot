@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import random
+import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -56,7 +57,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/quiz` - Take a vocabulary quiz\n"
         "• `/stats` - View your learning statistics\n"
         "• `/help` - Show this help message again\n\n"
-        "💡 *Tip:* You can also just type any word to get its definition instantly!"
+        "💡 *Tip:* You can also just type any word to get its definition instantly!\n"
+        "🔍 *Tip 2:* Try typing `define [word]` or just the word itself!"
     )
     await update.message.reply_html(welcome_message)
 
@@ -75,6 +77,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Show this message\n\n"
         "*Examples:*\n"
         "• `/define serendipity`\n"
+        "• `/define dental care` (multi-word)\n"
         "• `/save eloquent`\n"
         "• Just type a word like `benevolent`\n\n"
         "*Need more help?*\n"
@@ -83,34 +86,58 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_markdown(help_text)
 
 async def define_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get definition of a word."""
+    """Get definition of a word or phrase."""
     if not context.args:
         await update.message.reply_text(
-            "❌ Please provide a word.\n"
-            "Example: `/define serendipity`"
+            "❌ Please provide a word or phrase.\n"
+            "Example: `/define serendipity`\n"
+            "Example: `/define dental care`"
         )
         return
     
-    word = " ".join(context.args).strip().lower()
-    await update.message.reply_text(f"🔍 Looking up definition for *{word}*...", parse_mode='Markdown')
+    # Join all args to handle multi-word phrases
+    word_phrase = " ".join(context.args).strip().lower()
     
-    result = dict_api.get_definition(word)
+    # If it's a single word, look it up directly
+    # If it's a phrase, try to find the main word (last word or most significant word)
+    words = word_phrase.split()
+    
+    # Try to find the most relevant word (usually the last word or a noun)
+    # For "meaning of dental", we want "dental"
+    # For "define dental", we want "dental"
+    
+    # Remove common stop words and find the main word
+    stop_words = {'meaning', 'of', 'define', 'what', 'is', 'the', 'a', 'an', 'for'}
+    main_words = [w for w in words if w not in stop_words]
+    
+    if main_words:
+        # Use the first meaningful word, or the last one
+        search_word = main_words[-1] if len(main_words) > 1 else main_words[0]
+    else:
+        search_word = words[-1]  # Fallback to last word
+    
+    await update.message.reply_text(f"🔍 Looking up definition for *{search_word}*...", parse_mode='Markdown')
+    
+    result = dict_api.get_definition(search_word)
     
     if result.get("error"):
         await update.message.reply_text(
-            f"❌ Sorry, I couldn't find the definition for '{word}'.\n"
+            f"❌ Sorry, I couldn't find the definition for '{search_word}'.\n"
             "Please check the spelling or try another word."
         )
         return
     
     # Format the response
-    response = f"*📖 {word.capitalize()}*\n\n"
+    response = f"*📖 {search_word.capitalize()}*\n"
+    if len(words) > 1:
+        response += f"*Query:* \"{word_phrase}\"\n\n"
+    response += "\n"
     
-    for meaning in result.get("meanings", []):
+    for meaning in result.get("meanings", [])[:2]:
         part_of_speech = meaning.get("partOfSpeech", "").capitalize()
         response += f"*{part_of_speech}*\n"
         
-        for i, definition in enumerate(meaning.get("definitions", [])[:3], 1):
+        for i, definition in enumerate(meaning.get("definitions", [])[:2], 1):
             response += f"{i}. {definition.get('definition', '')}\n"
             if definition.get("example"):
                 response += f"   _Example: {definition.get('example')}_\n"
@@ -123,18 +150,18 @@ async def define_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Add option to save the word
     keyboard = [
-        [InlineKeyboardButton("💾 Save Word", callback_data=f"save_{word}")],
-        [InlineKeyboardButton("🔄 Get More Examples", callback_data=f"examples_{word}")]
+        [InlineKeyboardButton("💾 Save Word", callback_data=f"save_{search_word}")],
+        [InlineKeyboardButton("🔄 Get More Examples", callback_data=f"examples_{search_word}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_markdown(response, reply_markup=reply_markup)
     
     # Log the lookup
-    db.add_word_search(user_id=update.effective_user.id, word=word)
+    db.add_word_search(user_id=update.effective_user.id, word=search_word)
 
 async def get_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Find synonyms for a word."""
+    """Find synonyms for a word or phrase."""
     if not context.args:
         await update.message.reply_text(
             "❌ Please provide a word.\n"
@@ -142,22 +169,29 @@ async def get_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    word = " ".join(context.args).strip().lower()
+    # Join all args to handle multi-word phrases
+    word_phrase = " ".join(context.args).strip().lower()
+    words = word_phrase.split()
     
-    result = dict_api.get_synonyms(word)
+    # Extract the main word
+    stop_words = {'meaning', 'of', 'define', 'what', 'is', 'the', 'a', 'an', 'for', 'synonyms', 'synonym'}
+    main_words = [w for w in words if w not in stop_words]
+    search_word = main_words[-1] if main_words else words[-1]
+    
+    result = dict_api.get_synonyms(search_word)
     
     if result.get("error"):
         await update.message.reply_text(
-            f"❌ Sorry, I couldn't find synonyms for '{word}'. Please try another word."
+            f"❌ Sorry, I couldn't find synonyms for '{search_word}'. Please try another word."
         )
         return
     
     synonyms = result.get("synonyms", [])
     if not synonyms:
-        await update.message.reply_text(f"ℹ️ No synonyms found for '{word}'.")
+        await update.message.reply_text(f"ℹ️ No synonyms found for '{search_word}'.")
         return
     
-    response = f"*🔄 Synonyms for '{word.capitalize()}':*\n\n"
+    response = f"*🔄 Synonyms for '{search_word.capitalize()}':*\n\n"
     response += "• " + "\n• ".join(synonyms[:15])
     
     await update.message.reply_markdown(response)
@@ -171,24 +205,37 @@ async def save_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    word = " ".join(context.args).strip().lower()
+    # Join all args to handle multi-word phrases
+    word_phrase = " ".join(context.args).strip().lower()
+    words = word_phrase.split()
+    
+    # Extract the main word
+    stop_words = {'meaning', 'of', 'define', 'what', 'is', 'the', 'a', 'an', 'for', 'save'}
+    main_words = [w for w in words if w not in stop_words]
+    search_word = main_words[-1] if main_words else words[-1]
+    
     user_id = update.effective_user.id
     
     # Get definition first to store with the word
-    result = dict_api.get_definition(word)
+    result = dict_api.get_definition(search_word)
     definition = result.get("meanings", [{}])[0].get("definitions", [{}])[0].get("definition", "")
     part_of_speech = result.get("meanings", [{}])[0].get("partOfSpeech", "")
     
-    if db.save_word(user_id, word, definition, part_of_speech):
-        await update.message.reply_text(
-            f"✅ *{word.capitalize()}* has been saved to your vocabulary list!\n"
-            f"📚 You now have {db.get_saved_words_count(user_id)} words saved.",
-            parse_mode='Markdown'
-        )
+    if definition:
+        if db.save_word(user_id, search_word, definition, part_of_speech):
+            await update.message.reply_text(
+                f"✅ *{search_word.capitalize()}* has been saved to your vocabulary list!\n"
+                f"📚 You now have {db.get_saved_words_count(user_id)} words saved.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                f"ℹ️ *{search_word.capitalize()}* is already in your saved words!",
+                parse_mode='Markdown'
+            )
     else:
         await update.message.reply_text(
-            f"ℹ️ *{word.capitalize()}* is already in your saved words!",
-            parse_mode='Markdown'
+            f"❌ Could not find definition for '{search_word}'. Please check the spelling."
         )
 
 async def my_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -337,28 +384,99 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages (for instant word lookup)."""
-    word = update.message.text.strip().lower()
+    text = update.message.text.strip()
     
-    # Ignore if it's a command or too short
-    if word.startswith('/') or len(word) < 3:
+    # Ignore if it's a command
+    if text.startswith('/'):
         return
     
-    # Check if it's a valid word (contains only letters)
-    if not word.replace("'", "").isalpha():
-        await update.message.reply_text("ℹ️ Please send a valid word (letters only).")
+    # Check if it's too short
+    if len(text) < 2:
+        return
+    
+    # Check if user is asking "meaning of X" or "define X"
+    # Extract the word from natural language queries
+    text_lower = text.lower()
+    search_word = None
+    
+    # Pattern: "meaning of [word]"
+    if "meaning of" in text_lower:
+        # Extract after "meaning of"
+        parts = text_lower.split("meaning of", 1)
+        if len(parts) > 1:
+            words = parts[1].strip().split()
+            if words:
+                # Remove stop words and get the last meaningful word
+                stop_words = {'the', 'a', 'an', 'for', 'to', 'of'}
+                main_words = [w for w in words if w not in stop_words]
+                search_word = main_words[-1] if main_words else words[-1]
+    
+    # Pattern: "define [word]"
+    elif "define" in text_lower:
+        parts = text_lower.split("define", 1)
+        if len(parts) > 1:
+            words = parts[1].strip().split()
+            if words:
+                stop_words = {'the', 'a', 'an', 'for', 'to', 'of'}
+                main_words = [w for w in words if w not in stop_words]
+                search_word = main_words[-1] if main_words else words[-1]
+    
+    # Pattern: "what is [word]"
+    elif "what is" in text_lower:
+        parts = text_lower.split("what is", 1)
+        if len(parts) > 1:
+            words = parts[1].strip().split()
+            if words:
+                stop_words = {'the', 'a', 'an', 'for', 'to', 'of'}
+                main_words = [w for w in words if w not in stop_words]
+                search_word = main_words[-1] if main_words else words[-1]
+    
+    # If no pattern matched, use the entire text as a single word (if it's alphabetic)
+    else:
+        # Remove punctuation and check if it's a single word
+        clean_text = re.sub(r'[^\w\s]', '', text).strip()
+        if clean_text and len(clean_text.split()) == 1:
+            search_word = clean_text.lower()
+        else:
+            # Try to extract the last word or most significant word
+            words = clean_text.split()
+            if words:
+                search_word = words[-1].lower()
+    
+    # If we couldn't find a word, try to use the last word in the text
+    if not search_word:
+        words = text.split()
+        if words:
+            search_word = words[-1].lower()
+        else:
+            await update.message.reply_text(
+                "ℹ️ I couldn't understand which word to look up.\n"
+                "Try: `/define [word]` or just type a single word."
+            )
+            return
+    
+    # Validate the word (letters only, allow apostrophes)
+    if not re.match(r"^[a-zA-Z']+$", search_word):
+        await update.message.reply_text(
+            f"ℹ️ Please send a valid word (letters only).\n"
+            f"I understood: '{search_word}'"
+        )
         return
     
     # Look up the word
-    result = dict_api.get_definition(word)
+    result = dict_api.get_definition(search_word)
     
     if result.get("error"):
         await update.message.reply_text(
-            f"❌ I don't know the word '{word}'. Please check the spelling."
+            f"❌ I don't know the word '{search_word}'. Please check the spelling."
         )
         return
     
     # Format the response
-    response = f"*📖 {word.capitalize()}*\n\n"
+    response = f"*📖 {search_word.capitalize()}*\n"
+    if text_lower != search_word:
+        response += f"*Query:* \"{text}\"\n\n"
+    response += "\n"
     
     for meaning in result.get("meanings", [])[:2]:
         part_of_speech = meaning.get("partOfSpeech", "").capitalize()
@@ -369,19 +487,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if definition.get("example"):
                 response += f"   _Example: {definition.get('example')}_\n"
         
+        if meaning.get("synonyms"):
+            synonyms = ", ".join(meaning.get("synonyms")[:5])
+            response += f"*Synonyms:* {synonyms}\n"
+        
         response += "\n"
     
     # Add action buttons
     keyboard = [
-        [InlineKeyboardButton("💾 Save This Word", callback_data=f"save_{word}")],
-        [InlineKeyboardButton("🔄 Synonyms", callback_data=f"synonyms_{word}")]
+        [InlineKeyboardButton("💾 Save This Word", callback_data=f"save_{search_word}")],
+        [InlineKeyboardButton("🔄 Synonyms", callback_data=f"synonyms_{search_word}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_markdown(response, reply_markup=reply_markup)
     
     # Log the lookup
-    db.add_word_search(user_id=update.effective_user.id, word=word)
+    db.add_word_search(user_id=update.effective_user.id, word=search_word)
 
 # ============ CALLBACK QUERY HANDLER ============
 
