@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 import logging
@@ -12,7 +13,7 @@ class DictionaryAPI:
         self.base_url = "https://api.dictionaryapi.dev/api/v2/entries/en"
         self.wordnik_url = "https://api.wordnik.com/v4/word.json"
         # You can get a free Wordnik API key at https://www.wordnik.com/signup
-        self.wordnik_key = os.environ.get("WORDNIK_API_KEY", "")
+        self.wordnik_key = os.environ.get("WORDNIK_API_KEY", "")  # FIXED: Correct spelling
     
     def get_definition(self, word):
         """Get definition of a word."""
